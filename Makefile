@@ -1,3 +1,16 @@
+# Makeflie 的书写规则
+# target ... : prerequisites ...
+#	command
+#	...
+#	...
+# 注意 command 需要以 tab 开头
+# target
+# 可以是一个 object file （目标文件），也可以是一个执行文件，还可以是一个标签（label）
+# prerequisites
+# 生成该 target 所依赖的文件和/或 target
+# command
+# 该 target 要执行的命令（任意的 shell 命令
+
 OBJS = \
 	bio.o\
 	console.o\
