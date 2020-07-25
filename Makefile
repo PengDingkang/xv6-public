@@ -5,11 +5,18 @@
 #	...
 # 注意 command 需要以 tab 开头
 # target
-# 可以是一个 object file （目标文件），也可以是一个执行文件，还可以是一个标签（label）
+# 可以是一个 object file（目标文件），也可以是一个执行文件，还可以是一个标签（label）
 # prerequisites
 # 生成该 target 所依赖的文件和/或 target
 # command
 # 该 target 要执行的命令（任意的 shell 命令
+#
+# 当依赖的最后更新日期比目标文件更新或目标文件不存在时，则 make 会执行其之后的命令
+#
+# 注意，如果 target 的冒号之后没有指定依赖，那么 make 指令不会自动寻找依赖也不会自动执行之后的命令
+# 需要在 make 之后显式指出 label 名称，如 make clean
+# 这种特性可以允许我们定义一些编译无关的命令，如程序打包
+# 或者下面的 dist，产生发布软件包文件（即 distribution package）。这个命令将会将可执行文件及相关文件打包成一个tar.gz压缩的文件用来作为发布软件的软件包。
 
 OBJS = \
 	bio.o\
