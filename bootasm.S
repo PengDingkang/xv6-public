@@ -88,8 +88,8 @@ spin:
 .p2align 2                                # force 4 byte alignment
 gdt:
   SEG_NULLASM                             # 空
-  SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)   # 代码段
-  SEG_ASM(STA_W, 0x0, 0xffffffff)         # 数据段
+  SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)   # 代码段, STA_X 指代可执行, STA_R指代可读, 从 0x0 开始到 0xffffffff 结束
+  SEG_ASM(STA_W, 0x0, 0xffffffff)         # 数据段, STA_W 指代可写, 从 0x0 开始到 0xffffffff 结束
 
 gdtdesc:
   .word   (gdtdesc - gdt - 1)             # 16 位, 指示 长度
