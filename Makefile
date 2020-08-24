@@ -18,6 +18,7 @@
 # 这种特性可以允许我们定义一些编译无关的命令，如程序打包
 # 或者下面的 dist，产生发布软件包文件（即 distribution package）。这个命令将会将可执行文件及相关文件打包成一个tar.gz压缩的文件用来作为发布软件的软件包。
 
+# 定义一个变量，类似 C 语言的宏，便于生成对象的增删改
 OBJS = \
 	bio.o\
 	console.o\
@@ -110,6 +111,7 @@ ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fno-pie -nopie
 endif
 
+# xv6.img 生成依赖 bootblock 和 kernel
 xv6.img: bootblock kernel
 	dd if=/dev/zero of=xv6.img count=10000
 	dd if=bootblock of=xv6.img conv=notrunc
@@ -205,6 +207,7 @@ UPROGS=\
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
 
+# 命令之前加 '-'，代表无视无法读取的文件继续执行 
 -include *.d
 
 clean: 
