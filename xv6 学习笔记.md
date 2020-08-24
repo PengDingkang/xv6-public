@@ -148,3 +148,75 @@ seta20.2:
   outb    %al,$0x60               # 将 0xdf 写入 P2 端口，就打开了 A20
 ```
 
+然后就是进入保护模式
+可以看到第一步是准备全局描述符表 GDT
+
+``` makefile
+  lgdt    gdtdesc
+```
+
+这里 CPU 提供了一个 GDTR 寄存器用来保存 GDT 在内存中的位置和长度
+共 48 位, 高 32 位代表其地址, 其余用于保存 GDT 的段描述符数量
+此处用到了 `asm.h`
+
+``` makefile
+gdt:
+  SEG_NULLASM                             # 空
+  SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)   # 代码段, STA_X 指代可执行, STA_R指代可读, 从 0x0 开始到 0xffffffff 结束
+  SEG_ASM(STA_W, 0x0, 0xffffffff)         # 数据段, STA_W 指代可写, 从 0x0 开始到 0xffffffff 结束
+
+gdtdesc:
+  .word   (gdtdesc - gdt - 1)             # 16 位, 指示 长度
+  .long   gdt                             # 32 位, 指示 GDT 地址
+```
+
+然后打开保护模式
+此处用到了 `mmu.h` 中的 `CR0_PE`
+
+``` c
+#define CR0_PE          0x00000001      // Protection Enable
+```
+
+``` makefile
+  movl    %cr0, %eax       # 把 CR0 寄存器的值复制给 eax 寄存器
+  orl     $CR0_PE, %eax    # 与 CR0_PE 做或运算，打开保护模式
+  movl    %eax, %cr0
+```
+
+打开保护模式后, 此时指令仍然是 16 位代码, 需要通过长跳转跳转至 32 位
+
+``` makefile
+  ljmp    $(SEG_KCODE<<3), $start32
+  
+.code32  # Tell assembler to generate 32-bit code now.
+```
+
+进入保护模式运行, 做一些初始化
+
+``` makefile
+start32:
+  # Set up the protected-mode data segment registers
+  movw    $(SEG_KDATA<<3), %ax    # 将 ax 寄存器赋值为段选择子 Our data segment selector
+  movw    %ax, %ds                # 接下来用 ax 寄存器依次初始化数据段寄存器 -> DS: Data Segment
+  movw    %ax, %es                # 扩展段寄存器 -> ES: Extra Segment
+  movw    %ax, %ss                # 堆栈段寄存器 -> SS: Stack Segment
+  movw    $0, %ax                 # ax 寄存器置零 Zero segments not ready for use
+  movw    %ax, %fs                # 两个辅助寄存器置零 -> FS
+  movw    %ax, %gs                # -> GS
+```
+
+然后就可以开始调用 `bootmain.c` 了
+
+``` makefile
+  # Set up the stack pointer and call into C.
+  # 初始化栈，并调用 C 函数
+  movl    $start, %esp
+  call    bootmain
+```
+
+#### bootmain.c
+
+`bootasm.S` 将 CPU 转为 32 位保护模式后, `bootmain` 函数要做的事情就是将 `ELF` 格式的内核从硬盘中加载到内存里
+
+
+
