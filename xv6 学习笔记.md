@@ -84,7 +84,7 @@ xv6.img: bootblock kernel
 	dd if=kernel of=xv6.img seek=1 conv=notrunc
 ```
 
-然后我们再去寻找 `bootblock`, 开始启动引导流程
+然后我们去寻找 `bootblock`, 开始启动引导流程
 
 ### 引导流程
 
@@ -98,9 +98,7 @@ bootblock: bootasm.S bootmain.c
 	./sign.pl bootblock
 ```
 
-再从其依赖的源文件 `bootasm.S` 开始
-
-#### bootasm.S
+从其依赖的源文件 `bootasm.S` 开始
 
 从 `bootblock` 生成的一段中
 可以找到这么一句
@@ -215,10 +213,8 @@ start32:
   call    bootmain
 ```
 
-#### bootmain.c
-
 首先我们知道 `bootasm.S` 将 CPU 转为 32 位保护模式后, `bootmain` 函数要做的事情就是将 `ELF` 格式的内核从硬盘中加载到内存里
-因此我们不妨来看一下 `makefile` 中内核部分 [`kernel`](#kernel) 
+我们不妨来看一下 `makefile` 中内核部分 `kernel`
 
 ### 内核初始化
 
@@ -328,5 +324,93 @@ pde_t entrypgdir[NPDENTRIES] = {
 
 # 用 .comm 指令，在内核 bss 段定义一个 4096 大小的内核栈
 .comm stack, KSTACKSIZE
+```
+
+### 总结
+
+在从启动到引导进入 `main` 函数这段过程里, 主要经历了以下阶段
+
+- 开机运行在实模式下, 内存寻址限制在 1MB
+- 通过键盘控制器端口方式打开 A20 gate, 突破寻址限制
+- 准备全局描述符表, 并进入保护模式
+- 将内核从磁盘加载到内存
+- 运行内核初始化, 设置页表并开始分页机制
+- 跳转到 `main` 函数
+
+
+
+## 自旋锁
+
+xv6 中的自旋锁定义在 `spinlock.h` 中, 结构如下
+
+```c
+// Mutual exclusion lock.
+struct spinlock {
+  uint locked;       //锁的状态，0代表未上锁，1代表已上锁
+
+  //调试用的参数
+  char *name;        //锁名称
+  struct cpu *cpu;   //持有锁的 CPU
+  uint pcs[10];      //系统调用栈
+};
+```
+
+接下来我们看 `spinlock.c` 中的实现过程
+
+```c
+//请求获得锁
+//循环（自旋）直至获得锁
+//如果一个 CPU 占有锁时间过长，可能造成其他 CPU 等待时间过长
+//因此不适合多线程抢占一个资源的场景
+void
+acquire(struct spinlock *lk)
+{
+  pushcli(); //关中断，避免死锁
+```
+
+首先是关中断
+
+```c
+void
+pushcli(void)
+{
+  int eflags;
+
+  //调用汇编指令将 eflag (program status and control) 寄存器状态值保存到 EFLAGS 堆栈，再将堆栈中的值给 eflasg 变量
+  eflags = readeflags();
+  //cli() 函数直接调用汇编关中断指令 cli
+  cli();
+```
+
+然后检查 CPU 是否已经获得锁,
+
+```c
+  if(holding(lk)) //检查当前 CPU 是否已经获得该锁
+    panic("acquire"); //若已获得则调用 exit();
+```
+
+接下来是核心操作, 调用内联汇编函数 `xchg`
+
+```c
+  //原子操作 xchg
+  // xchgl 锁总线操作是非阻塞性的，因此不断尝试实现循环旋锁
+  while(xchg(&lk->locked, 1) != 0)
+    ;
+```
+
+```c
+static inline uint
+xchg(volatile uint *addr, uint newval)
+{
+  uint result;
+
+  // The + in "+m" denotes a read-modify-write operand.
+  // 交换两个变量，并返回第一个。操作具有原子性。
+  asm volatile("lock; xchgl %0, %1" :
+               "+m" (*addr), "=a" (result) :
+               "1" (newval) :
+               "cc");
+  return result;
+}
 ```
 

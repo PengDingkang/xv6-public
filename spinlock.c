@@ -17,18 +17,19 @@ initlock(struct spinlock *lk, char *name)
   lk->cpu = 0;
 }
 
-// Acquire the lock.
-// Loops (spins) until the lock is acquired.
-// Holding a lock for a long time may cause
-// other CPUs to waste time spinning to acquire it.
+//请求获得锁
+//循环（自旋）直至获得锁
+//如果一个 CPU 占有锁时间过长，可能造成其他 CPU 等待时间过长
+//因此不适合多线程抢占一个资源的场景
 void
 acquire(struct spinlock *lk)
 {
-  pushcli(); // disable interrupts to avoid deadlock.
-  if(holding(lk))
-    panic("acquire");
+  pushcli(); //关中断，避免死锁
+  if (holding(lk)) //检查当前 CPU 是否已经获得该锁
+      panic("acquire"); //若已获得则调用 exit();
 
-  // The xchg is atomic.
+  //原子操作 xchg
+  // xchgl 锁总线操作是非阻塞性的，因此不断尝试实现循环旋锁
   while(xchg(&lk->locked, 1) != 0)
     ;
 
@@ -85,12 +86,12 @@ getcallerpcs(void *v, uint pcs[])
     pcs[i] = 0;
 }
 
-// Check whether this cpu is holding the lock.
+//检查当前 CPU 是否已经获得该锁
 int
 holding(struct spinlock *lock)
 {
   int r;
-  pushcli();
+  pushcli();//关中断
   r = lock->locked && lock->cpu == mycpu();
   popcli();
   return r;
@@ -106,7 +107,9 @@ pushcli(void)
 {
   int eflags;
 
+  //调用汇编指令将 eflag (program status and control) 寄存器状态值保存到 EFLAGS 堆栈，再将堆栈中的值给 eflasg 变量
   eflags = readeflags();
+  //cli() 函数直接调用汇编关中断指令 cli
   cli();
   if(mycpu()->ncli == 0)
     mycpu()->intena = eflags & FL_IF;

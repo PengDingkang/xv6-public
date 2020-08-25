@@ -123,6 +123,7 @@ xchg(volatile uint *addr, uint newval)
   uint result;
 
   // The + in "+m" denotes a read-modify-write operand.
+  // xchgl 交换两个变量，并返回第一个。操作具有原子性。
   asm volatile("lock; xchgl %0, %1" :
                "+m" (*addr), "=a" (result) :
                "1" (newval) :
