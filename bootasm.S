@@ -49,6 +49,7 @@ seta20.2:
   lgdt    gdtdesc
   # 打开保护模式
   movl    %cr0, %eax
+  # 将寄存器 cr0 的 PE 位置 1，以开启保护模式
   orl     $CR0_PE, %eax
   movl    %eax, %cr0
 

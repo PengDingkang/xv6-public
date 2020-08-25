@@ -73,7 +73,7 @@ OBJS = \
 6. 根据依赖关系，决定哪些目标要重新生成。
 7. 执行生成命令。
 
-## 从 xv6.img 开始
+## 引导流程与内核初始化
 
 在 `Makefile` 文件中，我们从第一个 `target` 开始看
 
@@ -84,9 +84,9 @@ xv6.img: bootblock kernel
 	dd if=kernel of=xv6.img seek=1 conv=notrunc
 ```
 
-然后我们再去寻找 `bootblock`
+然后我们再去寻找 `bootblock`, 开始启动引导流程
 
-### bootblock
+### 引导流程
 
 ``` makefile
 bootblock: bootasm.S bootmain.c
@@ -98,7 +98,7 @@ bootblock: bootasm.S bootmain.c
 	./sign.pl bootblock
 ```
 
-再从其依赖的源文件 bootasm.S 开始
+再从其依赖的源文件 `bootasm.S` 开始
 
 #### bootasm.S
 
@@ -179,7 +179,8 @@ gdtdesc:
 
 ``` makefile
   movl    %cr0, %eax       # 把 CR0 寄存器的值复制给 eax 寄存器
-  orl     $CR0_PE, %eax    # 与 CR0_PE 做或运算，打开保护模式
+  # 将寄存器 cr0 的 PE 位置 1，以开启保护模式
+  orl     $CR0_PE, %eax    
   movl    %eax, %cr0
 ```
 
@@ -216,7 +217,116 @@ start32:
 
 #### bootmain.c
 
-`bootasm.S` 将 CPU 转为 32 位保护模式后, `bootmain` 函数要做的事情就是将 `ELF` 格式的内核从硬盘中加载到内存里
+首先我们知道 `bootasm.S` 将 CPU 转为 32 位保护模式后, `bootmain` 函数要做的事情就是将 `ELF` 格式的内核从硬盘中加载到内存里
+因此我们不妨来看一下 `makefile` 中内核部分 [`kernel`](#kernel) 
 
+### 内核初始化
 
+``` makefile
+kernel: $(OBJS) entry.o entryother initcode kernel.ld
+	$(LD) $(LDFLAGS) -T kernel.ld -o kernel entry.o $(OBJS) -b binary initcode entryother
+	$(OBJDUMP) -S kernel > kernel.asm
+	$(OBJDUMP) -t kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > kernel.sym
+```
+
+除去 `OBJS` 中的各种组件, 剩下的源文件有 3 个: `entryother.S` `initcode.S` `kernel.ld`
+其中 `kernel.ld` 是链接内核二进制文件的桥梁, 负责生成 `ELF` 内核文件
+
+``` 
+/*
+OUTPUT_FORMAT 指定输出文件使用的三种格式, 分别指代默认和大小端
+OUTPUT_ARCH 指定目标体系结构
+ENTRY 是程序开始执行点, 这里可以看到开始点是 _start
+*/
+OUTPUT_FORMAT("elf32-i386", "elf32-i386", "elf32-i386")
+OUTPUT_ARCH(i386)
+ENTRY(_start)
+```
+
+再回到 `bootmain` , 我们就可以大致清楚其运作机制
+
+``` c
+  elf = (struct elfhdr*)0x10000;  //指定 elf 内核文件头的物理地址
+  void (*entry)(void);  //定义一个 entry 指针
+  entry = (void(*)(void))(elf->entry);  //将 entry 指针定位到 elf 内核中所指的 entry 入口位置, 即 _start
+  entry();  //开始执行 entry
+```
+
+在代码中寻找 `_start` 函数, 其位于 `entry.S` 中
+
+``` 
+.globl _start
+_start = V2P_WO(entry)
+```
+
+接下来执行的便是 `entry`, 在此之前, 我们先看一下 `V2P_WO` 这个宏, 其定义在 `memlayout.h` 中
+
+``` c
+#define KERNBASE 0x80000000         // First kernel virtual address
+#define V2P_WO(x) ((x) - KERNBASE)    // same as V2P, but without casts
+```
+
+其作用便是将虚拟地址转换为物理地址
+而在 `kernel.ld` 中
+
+``` 		
+	/*指定内核开始的虚拟地址*/
+	. = 0x80100000;
+	/*
+	设置代码段定位器在 0x100000
+	*/
+	.text : AT(0x100000) {
+		*(.text .stub .text.* .gnu.linkonce.t.*)
+	}
+```
+
+此时内核的加载地址在 `0x100000` , 虚拟地址在 `0x80100000` , 通过这个宏来完成转换
+
+接下来进入 `entry` 部分, 开始运行内核代码
+
+``` makefile
+# 开启分页机制
+entry:
+  # 开启 4MB 内存分页支持
+  movl    %cr4, %eax
+  # CR4_PSE 为 Page Size Extensions 位，将其置 1 以实现 4MBytes 页大小
+  orl     $(CR4_PSE), %eax
+  movl    %eax, %cr4
+  # 建立页表, 见下
+  movl    $(V2P_WO(entrypgdir)), %eax
+  # cr3 寄存器存放一级页表的地址
+  movl    %eax, %cr3
+  # Turn on paging.
+  movl    %cr0, %eax
+  # 将 cr0 寄存器的 Write Protect 和 Paging 位置 1，开启内存分页机制
+  orl     $(CR0_PG|CR0_WP), %eax
+  movl    %eax, %cr0
+```
+
+关于 `entrypgdir` 部分见下
+
+``` c
+//将内核高位的虚拟地址映射到内核实际在的小端物理内存地址
+__attribute__((__aligned__(PGSIZE)))
+pde_t entrypgdir[NPDENTRIES] = {
+  //在物理内存 [0, 4MB) 建立一个页表, 对应虚拟内存 [0, 4MB)
+  [0] = (0) | PTE_P | PTE_W | PTE_PS,
+  //在物理内存 [0, 4MB) 建立一个页表, 对应虚拟内存 [0 + 0x80000000, 4MB + 0x80000000)
+  [KERNBASE>>PDXSHIFT] = (0) | PTE_P | PTE_W | PTE_PS,
+};
+```
+
+开启内存分页后, 再设置内核栈顶, 就能跳转进入 `main` 函数了
+
+``` makefile
+  # esp 寄存器存放了一个指针指向系统栈最上面一个栈的栈顶
+  movl $(stack + KSTACKSIZE), %esp
+
+  # 跳转到 main 函数开始执行
+  mov $main, %eax
+  jmp *%eax
+
+# 用 .comm 指令，在内核 bss 段定义一个 4096 大小的内核栈
+.comm stack, KSTACKSIZE
+```
 

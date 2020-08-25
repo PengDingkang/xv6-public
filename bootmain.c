@@ -19,7 +19,7 @@ bootmain(void)
 {
   struct elfhdr *elf;
   struct proghdr *ph, *eph;
-  void (*entry)(void);
+  void (*entry)(void);//定义一个 entry 指针
   uchar* pa;
 
   elf = (struct elfhdr*)0x10000;  // scratch space
@@ -43,8 +43,8 @@ bootmain(void)
 
   // Call the entry point from the ELF header.
   // Does not return!
-  entry = (void(*)(void))(elf->entry);
-  entry();
+  entry = (void(*)(void))(elf->entry);//将 entry 指针定位到 elf 内核中所指的 entry 入口位置, 即 _start
+  entry()//开始执行 entry
 }
 
 void
