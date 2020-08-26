@@ -24,12 +24,21 @@ extern int ncpu;
 // The layout of the context matches the layout of the stack in swtch.S
 // at the "Switch stacks" comment. Switch doesn't save eip explicitly,
 // but it is on the stack and allocproc() manipulates it.
+/*
+ 为内核上下文切换保存寄存器。
+ 不需要保存所有的段寄存器(%cs等)，因为它们在不同的内核上下文中是不变的。
+ 不需要保存%eax, %ecx, %edx，因为x86的惯例是调用者已经保存了它们。
+ 上下文存储在它们所描述的栈的底部；栈指针是上下文的地址。
+ 上下文的布局与swtch.S中 "Switch stacks "注释处的栈布局一致。
+ Switch并没有显式地保存eip，但它是在堆栈上的，并且allocproc()会对它进行操作。
+*/
 struct context {
+  // edi 和 esi 是变址寄存器
   uint edi;
   uint esi;
-  uint ebx;
-  uint ebp;
-  uint eip;
+  uint ebx;  // ebx 是基地址寄存器，在内存寻址时存放基地址
+  uint ebp;  // ebp 基址指针寄存器，存放指针指向栈底
+  uint eip;  // eip 寄存器存放 cpu 要读取指令的地址
 };
 
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };

@@ -487,3 +487,100 @@ xv6 实现自旋锁的主要流程如下
 - 释放锁
 - 开中断
 
+## 进程切换与 swtch 切换函数
+
+xv6 实现进程切换的方式使用了上下文
+当一个程序让出 CPU 使用权时, 进程的内核线程调用 `swtch` 函数, 保存旧 `context`, 恢复另一个 `context` 实现进程切换
+
+先看 `swtch.S`
+
+```asm
+# Context switch
+#
+#   void swtch(struct context **old, struct context *new);
+# 
+# Save the current registers on the stack, creating
+# a struct context, and save its address in *old.
+# Switch stacks to new and pop previously-saved registers.
+```
+
+这里介绍了 `swtch`  的运行机制, 可以看到 `swtch` 函数的定义中保存了新旧上下文内容
+我们先看一下 `context` 的定义
+
+``` c
+/*
+ 为内核上下文切换保存寄存器。
+ 不需要保存所有的段寄存器 (%cs 等)，因为它们在不同的内核上下文中是不变的。
+ 不需要保存 %eax, %ecx, %edx, 因为 x86 的惯例是调用者已经保存了它们。
+ 上下文存储在它们所描述的栈的底部；栈指针是上下文的地址。
+ 上下文的布局与 swtch.S 中 "Switch stacks" 注释处的栈布局一致。
+ Switch 并没有显式地保存 eip，但它是在堆栈上的，并且 allocproc() 会对它进行操作。
+*/
+struct context {
+  // edi 和 esi 是变址寄存器
+  uint edi;
+  uint esi;
+  uint ebx;  // ebx 是基地址寄存器，在内存寻址时存放基地址
+  uint ebp;  // ebp 基址指针寄存器，存放指针指向栈底
+  uint eip;  // eip 寄存器存放 cpu 要读取指令的地址
+};
+```
+
+了解了 `context` 的结构之后, 我们配合博客中的这张图, 就能很好地了解 `swtch` 函数调用的过程了
+
+<img src="xv6 学习笔记.assets/20170312105636434" alt="swtch函数调用" style="zoom:50%;" />
+
+```asm
+.globl swtch
+swtch:
+```
+
+调用时, 两个 `context` 参数首先在栈内, 每个存储区域都是 4 个字节
+在发生指令调用时, 将当前指令的下一条指令压入栈以便函数结束时调用, 这就是 `eip` 
+
+```asm
+  # 利用上面的状态图, 我们可以理解这一步操作的意义, 即令 edx 和 eax 分别指向 new 和 old 以便之后使用
+  movl 4(%esp), %eax
+  movl 8(%esp), %edx
+```
+
+接下来是将旧 `context` 的内容压入栈中
+
+```asm
+  # 正如 context 定义中提到的, eip 并没有在这里被显式处理, 因为已经有别的函数去处理它了
+  pushl %ebp
+  pushl %ebx
+  pushl %esi
+  pushl %edi
+```
+
+此时, 堆栈的情况是这样的
+
+<img src="xv6 学习笔记.assets/20170312111045371" alt="swtch压栈后" style="zoom:50%;" />
+
+栈顶 `esp` 指向的正是 `context` 中的第一个元素, 这样的结构使得进程的信息在切换和调用时都很方便
+接下来的切换栈就利用了这一点
+
+```asm
+  # Switch stacks
+  # 在上面我们已经知道 eax 中存放的是指向 old 的指针，这里要做的便是将这个指针作为栈顶
+  # 这样我们就完成了旧进程的保存
+  movl %esp, (%eax)
+  # 接下来就是恢复要运行的新进程，其本质就是将这个进程 context 中的各种寄存器值弹出到对应寄存器里
+  # 要实现这一点，只需要把当前栈顶设置为 new 进程，就完成了新进程的切换
+  movl %edx, %esp
+```
+
+切换完成后, 当前栈内存储的已经是要运行的新进程了, 只需要将其 `popl` 即可
+
+```asm
+  # Load new callee-saved registers
+  # 和压栈的顺序反过来弹出
+  popl %edi
+  popl %esi
+  popl %ebx
+  popl %ebp
+```
+
+最后 `ret` 指令会弹回下面的 `eip`, 新进程又能接着执行之前的下一条指令了
+
