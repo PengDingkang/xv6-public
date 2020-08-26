@@ -36,20 +36,24 @@ acquire(struct spinlock *lk)
   // Tell the C compiler and the processor to not move loads or stores
   // past this point, to ensure that the critical section's memory
   // references happen after the lock is acquired.
+  //内存屏障指令
+  //保证 read-modify-write 顺序执行
   __sync_synchronize();
 
-  // Record info about lock acquisition for debugging.
+  //获得锁之后更新 CPU 和调用栈信息
   lk->cpu = mycpu();
   getcallerpcs(&lk, lk->pcs);
 }
 
-// Release the lock.
+//释放锁
 void
 release(struct spinlock *lk)
 {
+    //与获得锁相同的方法检查是否有锁
   if(!holding(lk))
     panic("release");
 
+  //清空 CPU 和调用栈信息
   lk->pcs[0] = 0;
   lk->cpu = 0;
 
@@ -60,11 +64,11 @@ release(struct spinlock *lk)
   // stores; __sync_synchronize() tells them both not to.
   __sync_synchronize();
 
-  // Release the lock, equivalent to lk->locked = 0.
-  // This code can't use a C assignment, since it might
-  // not be atomic. A real OS would use C atomics here.
+  //释放锁
+  //使用一个内联汇编指令来完成以保证原子性
   asm volatile("movl $0, %0" : "+m" (lk->locked) : );
 
+  //开中断
   popcli();
 }
 
@@ -109,8 +113,9 @@ pushcli(void)
 
   //调用汇编指令将 eflag (program status and control) 寄存器状态值保存到 EFLAGS 堆栈，再将堆栈中的值给 eflasg 变量
   eflags = readeflags();
-  //cli() 函数直接调用汇编关中断指令 cli
+  // cli() 函数直接调用汇编关中断指令 cli
   cli();
+  // 检查 CPU 的 cli 嵌套数量是否为 0
   if(mycpu()->ncli == 0)
     mycpu()->intena = eflags & FL_IF;
   mycpu()->ncli += 1;
@@ -119,11 +124,11 @@ pushcli(void)
 void
 popcli(void)
 {
-  if(readeflags()&FL_IF)
+  if(readeflags()&FL_IF)  //如果堆栈中的 eflags 不等于中断常量, 则中断已经打开
     panic("popcli - interruptible");
-  if(--mycpu()->ncli < 0)
+  if(--mycpu()->ncli < 0)  //如果 cli 嵌套层数小于零, 则有异常的开中断操作
     panic("popcli");
-  if(mycpu()->ncli == 0 && mycpu()->intena)
+  if(mycpu()->ncli == 0 && mycpu()->intena)  //当 CPU 的嵌套标志位和 cli 嵌套层数都正确, 则调用开中断指令
     sti();
 }
 

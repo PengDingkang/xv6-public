@@ -110,7 +110,7 @@ $(LD) $(LDFLAGS) -N -e start -Ttext 0x7C00 -o bootblock.o bootasm.o bootmain.o
 这段说明 `bootblock` 的代码段加载到内存 `0x7C00` 处，代码从 `start` 处开始执行
 我们再看 `start` 段
 
-``` makefile
+``` asm
 .code16                       # 指代目前的运行模式：16 位实模式
 .globl start
 start:
@@ -126,7 +126,7 @@ start:
 由于 x86 CPU 初始运行时处于实模式状态, 只能使用 20 条地址线
 要突破这个限制, 需要打开 A20 gate
 
-``` makefile
+``` asm
   # 通过键盘控制器端口打开 A20 地址
   # CPU 处于实模式时，只能使用 20 条地址线，因此需要重新设置地址线来使用全部地址线
 seta20.1:
@@ -149,7 +149,7 @@ seta20.2:
 然后就是进入保护模式
 可以看到第一步是准备全局描述符表 GDT
 
-``` makefile
+``` asm
   lgdt    gdtdesc
 ```
 
@@ -157,7 +157,7 @@ seta20.2:
 共 48 位, 高 32 位代表其地址, 其余用于保存 GDT 的段描述符数量
 此处用到了 `asm.h`
 
-``` makefile
+``` asm
 gdt:
   SEG_NULLASM                             # 空
   SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)   # 代码段, STA_X 指代可执行, STA_R指代可读, 从 0x0 开始到 0xffffffff 结束
@@ -175,7 +175,7 @@ gdtdesc:
 #define CR0_PE          0x00000001      // Protection Enable
 ```
 
-``` makefile
+``` asm
   movl    %cr0, %eax       # 把 CR0 寄存器的值复制给 eax 寄存器
   # 将寄存器 cr0 的 PE 位置 1，以开启保护模式
   orl     $CR0_PE, %eax    
@@ -184,7 +184,7 @@ gdtdesc:
 
 打开保护模式后, 此时指令仍然是 16 位代码, 需要通过长跳转跳转至 32 位
 
-``` makefile
+``` asm
   ljmp    $(SEG_KCODE<<3), $start32
   
 .code32  # Tell assembler to generate 32-bit code now.
@@ -192,7 +192,7 @@ gdtdesc:
 
 进入保护模式运行, 做一些初始化
 
-``` makefile
+``` asm
 start32:
   # Set up the protected-mode data segment registers
   movw    $(SEG_KDATA<<3), %ax    # 将 ax 寄存器赋值为段选择子 Our data segment selector
@@ -206,7 +206,7 @@ start32:
 
 然后就可以开始调用 `bootmain.c` 了
 
-``` makefile
+``` asm
   # Set up the stack pointer and call into C.
   # 初始化栈，并调用 C 函数
   movl    $start, %esp
@@ -228,7 +228,7 @@ kernel: $(OBJS) entry.o entryother initcode kernel.ld
 除去 `OBJS` 中的各种组件, 剩下的源文件有 3 个: `entryother.S` `initcode.S` `kernel.ld`
 其中 `kernel.ld` 是链接内核二进制文件的桥梁, 负责生成 `ELF` 内核文件
 
-``` 
+``` asm
 /*
 OUTPUT_FORMAT 指定输出文件使用的三种格式, 分别指代默认和大小端
 OUTPUT_ARCH 指定目标体系结构
@@ -250,7 +250,7 @@ ENTRY(_start)
 
 在代码中寻找 `_start` 函数, 其位于 `entry.S` 中
 
-``` 
+``` asm
 .globl _start
 _start = V2P_WO(entry)
 ```
@@ -265,7 +265,7 @@ _start = V2P_WO(entry)
 其作用便是将虚拟地址转换为物理地址
 而在 `kernel.ld` 中
 
-``` 		
+``` 		asm
 	/*指定内核开始的虚拟地址*/
 	. = 0x80100000;
 	/*
@@ -280,7 +280,7 @@ _start = V2P_WO(entry)
 
 接下来进入 `entry` 部分, 开始运行内核代码
 
-``` makefile
+``` asm
 # 开启分页机制
 entry:
   # 开启 4MB 内存分页支持
@@ -314,7 +314,7 @@ pde_t entrypgdir[NPDENTRIES] = {
 
 开启内存分页后, 再设置内核栈顶, 就能跳转进入 `main` 函数了
 
-``` makefile
+``` asm
   # esp 寄存器存放了一个指针指向系统栈最上面一个栈的栈顶
   movl $(stack + KSTACKSIZE), %esp
 
@@ -357,6 +357,8 @@ struct spinlock {
 
 接下来我们看 `spinlock.c` 中的实现过程
 
+### 获得锁
+
 ```c
 //请求获得锁
 //循环（自旋）直至获得锁
@@ -389,7 +391,7 @@ pushcli(void)
     panic("acquire"); //若已获得则调用 exit();
 ```
 
-接下来是核心操作, 调用内联汇编函数 `xchg`
+接下来是核心操作, 调用内联汇编函数 `xchg` 改变上锁状态
 
 ```c
   //原子操作 xchg
@@ -414,3 +416,67 @@ xchg(volatile uint *addr, uint newval)
 }
 ```
 
+由于加锁的过程是一个严格的时序依赖过程, 需要避免编译器和 CPU 使用乱序来对指令执行进行并行优化
+
+``` c
+  //内存屏障指令
+  //保证 read-modify-write 顺序执行
+  __sync_synchronize();
+```
+
+获得锁之后, 更新 Debug 信息
+
+```c
+  //获得锁之后更新 CPU 和调用栈信息
+  lk->cpu = mycpu();
+  getcallerpcs(&lk, lk->pcs);
+```
+
+### 释放锁
+
+释放锁的过程原理和获得锁一样
+
+```c
+//释放锁
+void
+release(struct spinlock *lk)
+{
+  //与获得锁相同的方法检查是否有锁
+  if(!holding(lk))
+    panic("release");
+
+  //清空 CPU 和调用栈信息
+  lk->pcs[0] = 0;
+  lk->cpu = 0;
+  
+  __sync_synchronize();
+
+  //释放锁
+  //使用一个内联汇编指令来完成以保证原子性
+  asm volatile("movl $0, %0" : "+m" (lk->locked) : );
+
+  //开中断
+  popcli();
+}
+```
+
+其中开中断的过程和关中断类似
+
+```c
+void
+popcli(void)
+{
+  if(readeflags()&FL_IF)  //如果堆栈中的 eflags 不等于中断常量, 则中断已经打开
+    panic("popcli - interruptible");
+  if(--mycpu()->ncli < 0)  //如果 cli 嵌套层数小于零, 则有异常的开中断操作
+    panic("popcli");
+  if(mycpu()->ncli == 0 && mycpu()->intena)  //当 CPU 的嵌套标志位和 cli 嵌套层数都正确, 则调用开中断指令
+    sti();
+}
+```
+
+### 总结
+
+xv6 实现自旋锁的主要流程如下
+
+- 
