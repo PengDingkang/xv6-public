@@ -1,13 +1,13 @@
 // Per-CPU state
 struct cpu {
-  uchar apicid;                // Local APIC ID
-  struct context *scheduler;   // swtch() here to enter scheduler
+  uchar apicid;                // Local APIC 寄存器 ID，这个寄存器控制 local 和 external 中断的产生、发送和接收等
+  struct context *scheduler;   // 上下文内容指针，用于 swtch() 函数调用进行进程切换
   struct taskstate ts;         // Used by x86 to find stack for interrupt
   struct segdesc gdt[NSEGS];   // x86 global descriptor table
   volatile uint started;       // Has the CPU started?
-  int ncli;                    // Depth of pushcli nesting.
-  int intena;                  // Were interrupts enabled before pushcli?
-  struct proc *proc;           // The process running on this cpu or null
+  int ncli;                    // 中断嵌套层数
+  int intena;                  // 在 pushcli 检查是否已经启用了中断
+  struct proc *proc;           // 在当前 CPU 上运行的进程
 };
 
 extern struct cpu cpus[NCPU];
@@ -41,18 +41,18 @@ struct context {
   uint eip;  // eip 寄存器存放 cpu 要读取指令的地址
 };
 
-enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };  //进程的六种状态
 
 // Per-process state
 struct proc {
-  uint sz;                     // Size of process memory (bytes)
-  pde_t* pgdir;                // Page table
-  char *kstack;                // Bottom of kernel stack for this process
-  enum procstate state;        // Process state
-  int pid;                     // Process ID
-  struct proc *parent;         // Parent process
+  uint sz;                     // 进程占用的内存大小 (bytes)
+  pde_t* pgdir;                // 页表
+  char *kstack;                // 进程在内核栈中底部的位置
+  enum procstate state;        // 进程状态
+  int pid;                     // 进程 PID
+  struct proc *parent;         // 父进程
   struct trapframe *tf;        // Trap frame for current syscall
-  struct context *context;     // swtch() here to run process
+  struct context *context;     // 上下文内容指针，用于 swtch() 函数调用进行进程切换
   void *chan;                  // If non-zero, sleeping on chan
   int killed;                  // If non-zero, have been killed
   struct file *ofile[NOFILE];  // Open files

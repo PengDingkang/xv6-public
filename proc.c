@@ -7,6 +7,7 @@
 #include "proc.h"
 #include "spinlock.h"
 
+//由自旋锁和进程数组构成进程表
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -312,44 +313,45 @@ wait(void)
 }
 
 //PAGEBREAK: 42
-// Per-CPU process scheduler.
-// Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run
-//  - swtch to start running that process
-//  - eventually that process transfers control
-//      via swtch back to the scheduler.
+// 每个 CPU 的 scheduler
+// 每个 CPU 在启动完成之后就会开始调用 scheduler()
+// Scheduler 永远不会返回，它会一直循环做：
+//  - 选择一个进程来运行
+//  - 调用 swtch 来切换到这个进程并运行
+//  - 最终该进程通过调用 swtch 回到 scheduler 来让出 CPU 的控制权
 void
 scheduler(void)
 {
+  //为当前 CPU 初始化
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
   
+  //这个循环不会退出，CPU 就绪后就会一直循环找进程
   for(;;){
-    // Enable interrupts on this processor.
-    sti();
+    sti();//开中断，防止所有进程都在等待 IO 时，由于关中断产生的死锁
 
-    // Loop over process table looking for process to run.
-    acquire(&ptable.lock);
+    acquire(&ptable.lock); //获得进程表中的锁
+    //循环检查进程表中的进程，如果有进程处于就绪状态则继续运行下面的代码，否则检查下一个
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
+      //切换到选中的进程，处理器将会负责释放锁并在跳转回来之前重新请求锁
       c->proc = p;
+      //大概是切换 CPU 任务状态堆栈和全局描述符的函数以及切换到该进程的页表用于初始化运行环境，实现相当繁琐并涉及 x86 底层，这里不做重点讨论
       switchuvm(p);
-      p->state = RUNNING;
+      p->state = RUNNING;//将进程的状态切换为运行态
 
-      swtch(&(c->scheduler), p->context);
+      swtch(&(c->scheduler), p->context);//从 scheduler 切换到新进程
+      //切换到内核页表
       switchkvm();
 
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
+      //进程执行完毕后，重置 CPU 中运行的进程信息
       c->proc = 0;
     }
+    //退出循环可能是由于 CPU 闲置，因此释放进程表的锁，防止当前 CPU 一直占有锁
+    //而其他 CPU 无法调度运行导致死锁
     release(&ptable.lock);
 
   }
@@ -366,8 +368,14 @@ void
 sched(void)
 {
   int intena;
+  //获得当前 CPU 中运行的进程
   struct proc *p = myproc();
 
+  //以下四种情况会导致调度失败：
+  // - CPU 没有获得进程表锁
+  // - CPU 的中断嵌套层数不为 1
+  // - 进程已经处于运行态
+  // - 调度过程的中断被打开
   if(!holding(&ptable.lock))
     panic("sched ptable.lock");
   if(mycpu()->ncli != 1)
@@ -376,7 +384,9 @@ sched(void)
     panic("sched running");
   if(readeflags()&FL_IF)
     panic("sched interruptible");
+  //保存和恢复中断启用标识，因为它是这个内核线程的属性而不是这个 CPU
   intena = mycpu()->intena;
+  //调用 swtch 完成切换
   swtch(&p->context, mycpu()->scheduler);
   mycpu()->intena = intena;
 }
@@ -385,10 +395,10 @@ sched(void)
 void
 yield(void)
 {
-  acquire(&ptable.lock);  //DOC: yieldlock
-  myproc()->state = RUNNABLE;
-  sched();
-  release(&ptable.lock);
+  acquire(&ptable.lock);  //不断自旋等待尝试获取进程表锁
+  myproc()->state = RUNNABLE;  //将进程设置为就绪态
+  sched();  //调用 shecd 函数进行进程切换
+  release(&ptable.lock);  //调度完成后释放进程表锁
 }
 
 // A fork child's very first scheduling by scheduler()

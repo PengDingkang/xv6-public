@@ -48,10 +48,9 @@ seta20.2:
   # 共 48 位, 高 32 位代表其地址, 其余用于保存 GDT 的段描述符数量
   lgdt    gdtdesc
   # 打开保护模式
-  movl    %cr0, %eax
-  # 将寄存器 cr0 的 PE 位置 1，以开启保护模式
-  orl     $CR0_PE, %eax
-  movl    %eax, %cr0
+  movl    %cr0, %eax              # 把 CR0 寄存器的值保存在 eax 寄存器中
+  orl     $CR0_PE, %eax           # 与 CR0_PE 做按位或, 相当于给 0 位置 1
+  movl    %eax, %cr0              # 将 eax 寄存器中的值写回到 cr0 中
 
 //PAGEBREAK!
   # Complete the transition to 32-bit protected mode by using a long jmp
